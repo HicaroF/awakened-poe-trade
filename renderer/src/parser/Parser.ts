@@ -177,6 +177,18 @@ function normalizeName (item: ParserState) {
   }
 }
 
+function findVisceraByTieredName (name: string): BaseType[] | undefined {
+  let rest = name
+  for (let space = rest.indexOf(' '); space !== -1; space = rest.indexOf(' ')) {
+    rest = rest.slice(space + 1)
+    const info = ITEM_BY_TRANSLATED('ITEM', rest)
+    if (info?.length && (info[0].craftable?.category === ItemCategory.Viscera || info[0].viscera)) {
+      return info
+    }
+  }
+  return undefined
+}
+
 function findInDatabase (item: ParserState) {
   let info: BaseType[] | undefined
   if (item.category === ItemCategory.DivinationCard) {
@@ -193,6 +205,9 @@ function findInDatabase (item: ParserState) {
     info = ITEM_BY_TRANSLATED('UNIQUE', item.name)
   } else {
     info = ITEM_BY_TRANSLATED('ITEM', item.baseType ?? item.name)
+    if (!info?.length && !item.baseType) {
+      info = findVisceraByTieredName(item.name)
+    }
   }
   if (!info?.length) {
     return err('item.unknown')
@@ -215,6 +230,10 @@ function findInDatabase (item: ParserState) {
       item.category = ITEM_BY_REF('ITEM',
         item.info.unique.base)![0].craftable!.category
     }
+  }
+  // Viscera (Covens league) have no "Rarity:" line, but carry implicit modifiers
+  if (item.category === ItemCategory.Viscera && item.rarity == null) {
+    item.rarity = ItemRarity.Normal
   }
 }
 
@@ -244,7 +263,10 @@ function parseMapTier (item: ParserState) {
 }
 
 function parseAreaPropNested (line: string, item: ParsedItem): boolean {
-  if (line.startsWith(_$.MAP_ITEM_QUANTITY)) {
+  if (line.startsWith(_$.MAP_ATLAS_DROPS)) {
+    item.areaAtlasDrops = parseInt(line.slice(_$.MAP_ATLAS_DROPS.length), 10)
+    return true
+  } else if (line.startsWith(_$.MAP_ITEM_QUANTITY)) {
     item.areaItemQuantity = parseInt(line.slice(_$.MAP_ITEM_QUANTITY.length), 10)
     return true
   } else if (line.startsWith(_$.MAP_ITEM_RARITY)) {
@@ -440,7 +462,7 @@ function parseInfluence (section: string[], item: ParsedItem) {
 }
 
 function parseCorrupted (section: string[], item: ParsedItem) {
-  if (section[0] === _$.CORRUPTED) {
+  if (section[0] === _$.CORRUPTED || section[0] === _$.CORRUPTED_TWICE) {
     item.isCorrupted = true
     return 'SECTION_PARSED'
   } else if (section[0] === _$.UNMODIFIABLE) {
@@ -525,7 +547,8 @@ function parseImbuedGem (section: string[], item: ParsedItem) {
   if (item.category !== ItemCategory.Gem) return 'PARSER_SKIPPED'
 
   if (section.length === 1) {
-    const support = STAT_BY_MATCH_STR(section[0])
+    const line = section[0].endsWith(' (imbued)') ? section[0].slice(0, -' (imbued)'.length) : section[0]
+    const support = STAT_BY_MATCH_STR(line)
     if (!support) return 'SECTION_SKIPPED'
 
     item.newMods.push({
@@ -795,6 +818,7 @@ function parseMercenaryGems (section: string[], item: ParsedItem) {
 
 function parseModifiers (section: string[], item: ParsedItem) {
   if (
+    !item.info.viscera &&
     item.rarity !== ItemRarity.Normal &&
     item.rarity !== ItemRarity.Magic &&
     item.rarity !== ItemRarity.Rare &&
